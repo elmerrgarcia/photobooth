@@ -7,7 +7,11 @@ export class TemplateEngine {
 
   constructor() {
     this.canvas = document.createElement('canvas');
-    this.ctx = this.canvas.getContext('2d')!;
+    const ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) {
+      throw new Error('Failed to get 2D context');
+    }
+    this.ctx = ctx;
   }
 
   async composePhotos(
@@ -59,23 +63,77 @@ export class TemplateEngine {
           this.canvas.width = bg.width;
           this.canvas.height = bg.height;
 
-          // Draw background template
-          this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-          this.ctx.drawImage(bg, 0, 0, this.canvas.width, this.canvas.height);
+          // Create a separate canvas for slot colors
+          const slotCanvas = document.createElement('canvas');
+          slotCanvas.width = bg.width;
+          slotCanvas.height = bg.height;
+          const slotCtx = slotCanvas.getContext('2d', { willReadFrequently: true });
+          
+          if (!slotCtx) {
+            reject(new Error('Failed to get slot canvas context'));
+            return;
+          }
 
-          // Use configured slots; if fewer photos than slots, fill sequentially
+          // Simple approach: colors first, template on top, photos last
+          console.log('Simple approach: colors → template → photos');
+          
+          // White background
+          this.ctx.fillStyle = '#ffffff';
+          this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+          
+          // Test template transparency first
+          this.ctx.drawImage(bg, 0, 0, this.canvas.width, this.canvas.height);
+          if (design.slots.length > 0) {
+            const firstSlot = design.slots[0];
+            const slotAlpha = this.ctx.getImageData(firstSlot.x + 5, firstSlot.y + 5, 1, 1).data[3];
+            const borderAlpha = this.ctx.getImageData(firstSlot.x - 5, firstSlot.y - 5, 1, 1).data[3];
+            console.log('Template slot area alpha:', slotAlpha);
+            console.log('Template border area alpha:', borderAlpha);
+            console.log('Template image loaded with cache-busting:', design.backgroundUrl + '?t=' + Date.now());
+          }
+          
+          // Your approach: photos first, then template with alpha channel
+          console.log('Your approach: photos first, then template with alpha channel');
+          
+          // Draw photos first
           const max = Math.min(photos.length, design.slots.length);
+          console.log('Photos available:', photos.length, 'Slots available:', design.slots.length);
+          console.log('Will draw', max, 'photos');
+          
           for (let i = 0; i < max; i++) {
             await this.drawPhoto(photos[i], design.slots[i]);
           }
+          
+          // Draw slot colors in remaining empty slots
+          console.log('Drawing colors in empty slots');
+          for (let i = max; i < design.slots.length; i++) {
+            const colors = ['rgba(255, 255, 0, 1)', 'rgba(255, 0, 0, 1)', 'rgba(0, 255, 0, 1)', 'rgba(0, 0, 255, 1)', 'rgba(255, 165, 0, 1)'];
+            this.ctx.fillStyle = colors[i % colors.length];
+            const padding = 3;
+            this.ctx.fillRect(
+              design.slots[i].x + padding, 
+              design.slots[i].y + padding, 
+              design.slots[i].width - (padding * 2), 
+              design.slots[i].height - (padding * 2)
+            );
+          }
+          
+          // Paste template over everything using PNG alpha channel
+          console.log('Pasting template over with alpha channel');
+          this.ctx.globalCompositeOperation = 'source-over';
+          this.ctx.drawImage(bg, 0, 0, this.canvas.width, this.canvas.height);
+          
+          console.log('Simple solution complete');
 
-          resolve(this.canvas.toDataURL('image/jpeg', 0.9));
+          const dataUrl = this.canvas.toDataURL('image/png');
+          console.log('Generated data URL length:', dataUrl.length);
+          resolve(dataUrl);
         } catch (err) {
           reject(err);
         }
       };
       bg.onerror = (e) => reject(e);
-      bg.src = design.backgroundUrl;
+      bg.src = design.backgroundUrl + '?t=' + Date.now();
     });
   }
 
